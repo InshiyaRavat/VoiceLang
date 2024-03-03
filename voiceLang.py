@@ -114,7 +114,7 @@ class Lexer:
             elif self.current_char =='-':
                 tokens.append(Token(TT_MINUS,pos_start=self.pos))
                 self.advance()
-            elif self.current_char =='*':
+            elif self.current_char =='x':
                 tokens.append(Token(TT_MUL,pos_start=self.pos))
                 self.advance()
             elif self.current_char =='/':
@@ -160,6 +160,8 @@ class Lexer:
 class NumberNode:
     def __init__(self,tok):
         self.tok=tok
+        self.pos_start = self.tok.pos_start
+        self.pos_end = self.tok.pos_end
     
     def __repr__(self):
         return f'{self.tok}'
@@ -169,6 +171,8 @@ class BinOpNode:
         self.left_node = left_node
         self.op_tok = op_tok
         self.right_node = right_node
+        self.pos_start = self.left_node.pos_start
+        self.pos_end = self.right_node.pos_end
     def __repr__(self):
         return f'({self.left_node} , {self.op_tok} , {self.right_node})'
 
@@ -176,6 +180,8 @@ class UnaryOpNode:
     def __init__(self,op_tok,node):
         self.op_tok = op_tok
         self.node = node
+        self.pos_start = self.op_tok.pos_start
+        self.pos_end = node.pos_end
     
     def __repr__(self):
         return f'({self.op_tok}, {self.node})'
@@ -274,8 +280,77 @@ class Parser:
             if res.error : return res
             left = BinOpNode(left,op_tok,right)
         return res.success(left)
+    
+################# VALUES ###############
 
+class Number:
+    def __init__(self,value):
+        self.value = value
+        self.set_pos() #to set position so that we can know about the divide by zero and such exceptions
 
+    def set_pos(self,pos_start=None,pos_end=None):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+        return self
+    
+    def added_to(self,other):
+        if isinstance(other,Number):
+            return Number(self.value + other.value)    
+
+    def subbed_by(self,other):
+        if isinstance(other,Number):
+            return Number(self.value - other.value) 
+        
+    def multed_by(self,other):
+        if isinstance(other,Number):
+            return Number(self.value * other.value)  
+        
+    def dived_by(self,other):
+        if isinstance(other,Number):
+            return Number(self.value / other.value) 
+
+    def __repr__(self):
+         return str(self.value)
+
+################# INTERPRETER ##########
+class Interpreter:
+    #this method visit process the passed node and then visit all its child nodes
+    def visit(self, node):
+        #if the node type is binary operator then it will assign visit_binaryOp to method_name, similarly if type is number node then visit_numberNode assigned to method_name
+        method_name = f'visit_{type(node).__name__}'
+        method = getattr(self,method_name,self.no_visit_method)
+        #no_visit_method is the method that will be called if no method_name is found
+        return method(node)
+    
+    def no_visit_method(self,node):
+        raise Exception(f'No visit_{type(node).__name__} method defined')
+    
+    #####################################
+
+    def visit_NumberNode(self,node):
+        return Number(node.tok.value).set_pos(node.pos_start,node.pos_end)
+
+    def visit_BinOpNode(self,node):
+        left = self.visit(node.left_node)
+        right = self.visit(node.right_node)
+        if node.op_tok.type == TT_PLUS:
+            result = left.added_to(right)
+        elif node.op_tok.type == TT_MINUS:
+            result = left.subbed_by(right)
+        elif node.op_tok.type == TT_MUL:
+            result = left.multed_by(right)
+        elif node.op_tok.type == TT_DIV:
+            result = left.dived_by(right)
+
+        return result.set_pos(node.pos_start,node.pos_end)
+
+    def visit_UnaryOpNode(self,node):
+        number = self.visit(node.node)
+
+        if node.op_tok.type == TT_MINUS:
+            number = number.multed_by(Number(-1)) #we multiply the number by -1 so that it becomes -{number}
+
+        return number.set_pos(node.pos_start,node.pos_end)
 
 
              
@@ -289,5 +364,11 @@ def run(fn , text):
     #### GENERATE AST #####
     parser = Parser(tokens)
     ast = parser.parse()
+    if ast.error: return None,ast.error
+
+    ## run program ##
+    interpreter = Interpreter()
+    result = interpreter.visit(ast.node)
     # return tokens,error
-    return ast.node,ast.error
+    # return ast.node,ast.error
+    return result,None
